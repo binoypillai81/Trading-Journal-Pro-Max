@@ -307,3 +307,14 @@ chrono_seq, import row, raw row), `timestamp_corrections`, `market_bars`, `revie
   comparison and a dedicated hindsight-drift report. Revisions are already stored for the drift
   report.
 * **VWAP** isn't offered, because the index series has no volume.
+
+---
+
+## Licence
+
+MIT: see [LICENSE](LICENSE). The bundled TradingView Lightweight Charts library is licensed separately
+under Apache-2.0 (`app/static/vendor/lightweight-charts.LICENSE`).
+
+This is a journaling and review tool, not financial advice. It makes no trading recommendations, and
+its calculations (P&L pairing, expiry settlement, excursions) should be checked against your broker's
+records before you rely on them.
