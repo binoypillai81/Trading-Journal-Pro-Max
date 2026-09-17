@@ -189,6 +189,10 @@ tr.is-locked td { color: var(--muted); }
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .6rem .9rem; }
 .fact .k { font: 600 .68rem var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 .fact .v { font: 600 1.05rem var(--font-mono); }
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; }
+.timeline li { display: flex; gap: .5rem; align-items: flex-start; }
+.tl-dot { flex: none; width: 1.5rem; height: 1.5rem; border-radius: 50%; display: grid; place-items: center; font: 600 .7rem var(--font-mono); background: var(--panel-2); border: 1px solid var(--line); }
+.tl-title { font-weight: 600; font-size: .85rem; }
 .day-panel { margin-top: .75rem; padding: .6rem .75rem; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
 .standing { font-size: 1.1rem; font-weight: 600; margin: .1rem 0 .6rem; }
 .blind-note { font-size: .82rem; color: var(--muted); }

@@ -147,7 +147,11 @@ Go to **Sessions → Start a new chronological session**. The review screen show
 * Trade *N of M*, a progress bar, and the previous trade's time. The next trade's time is hidden
   by default; you can enable it in Settings.
 * A 15-minute chart cut at the entry, with EMA 15, classic pivots and an entry marker.
-  Previous-day high/low/close and day open are optional toggles.
+  * **Where the entry falls in its candle:** a line under the chart says so exactly, e.g. "7 min 26 s
+    into the 13:30–13:45 candle, still forming".
+  * **Optional toggles:** previous-day high/low/close, day open, swing support/resistance and VWAP.
+    Swing levels come from completed candles only. VWAP is disabled when the data has no volume, as
+    with index data.
 * **Day P&L before this entry:** the realised P&L of trades that closed earlier the same day, with wins/losses,
   the current losing streak, positions still open, and whether it's the first trade of the day. Trades
   still open at the entry are excluded, because their result wasn't known yet. P&L is as imported
@@ -160,8 +164,10 @@ Go to **Sessions → Start a new chronological session**. The review screen show
 * **REVEAL WHAT HAPPENED:** the rest of the candles, exit, P&L, MFE/MAE, duration and a *thesis
   vs reality* table. Each row is labelled FACT or USER'S STATED BELIEF.
 * A post-outcome reflection, including the hindsight question and psychology flags.
-* **TRADE COMPLETED:** the next trade unlocks, and observations from trades already reviewed are
-  shown, marked **OBSERVATION — NOT YET A RULE**.
+* **TRADE COMPLETED:** the next trade unlocks. You get a structured summary of that trade (facts,
+  your stated beliefs, your lesson, and questions to investigate), plus observations from trades
+  already reviewed, marked **OBSERVATION — NOT YET A RULE**. Evidence trade numbers link to those
+  reviews.
 
 ### Excluding trades (e.g. no market data)
 
@@ -180,6 +186,21 @@ Excluded trades:
 * still count toward that day's P&L context, because you knew their result at the time.
 
 Every exclusion needs a reason and is logged. Trades whose thesis is already locked can't be excluded.
+
+### Studying completed trades and analytics
+
+* **Completed trades:** each shows a timeline from the market before entry through thesis lock,
+  reveal, reflection, psychology tags and lessons to the next trade unlocking.
+* **Analytics tabs:**
+  * **Overview & setups** and **Prediction calibration.**
+  * **Psychology dashboard:** the 12 tracked items, each showing how it is identified.
+  * **Conditions & tags:** including day P&L and multi-entry.
+  * **Why did I take this trade?**
+  * **Process consistency:** including "entered before the stated confirmation completed" and an
+    optional declared rule, "only enter after the confirming candle has closed".
+  * **Repeated behaviour:** reactions after losses and after wins, possible early and late entries,
+    exit behaviour, and similar chart structures at entry.
+* **Evidence links:** trade numbers link to the underlying reviews.
 
 ### Resuming
 

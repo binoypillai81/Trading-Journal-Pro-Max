@@ -23,9 +23,13 @@ function statsRow(label, s, extra = []) {
 }
 const STATS_HEAD = ["Group", "Trades", "% of trades", "W/L", "Win rate", "Avg pts", "Avg MFE", "Avg MAE", "Rules followed"];
 
-function evidence(positions) {
-  return h("span", { class: "small mono muted" }, positions.length ? `trades #${positions.join(", #")}` : "");
+let EVIDENCE_INDEX = {};
+export function evidenceLinks(positions, index = EVIDENCE_INDEX) {
+  if (!positions.length) return h("span", {});
+  return h("span", { class: "small mono muted" }, "trades ",
+    positions.map((p, i) => [i ? ", " : "", index[String(p)] ? h("a", { href: `#/completed/${index[String(p)]}`, title: "Open this completed review" }, `#${p}`) : `#${p}`]));
 }
+const evidence = (positions) => evidenceLinks(positions);
 
 export async function analyticsView(root) {
   mount(root, loading());
@@ -43,6 +47,7 @@ export async function analyticsView(root) {
     if (q.scope === "full_history") params.set("acknowledge_full_history", q.ack);
     try {
       const a = await api("GET", `/api/analytics?${params}`);
+      EVIDENCE_INDEX = a.evidence_index || {};
       scopeBanner.replaceChildren(h("div", { class: `callout ${q.scope === "full_history" ? "callout-warn" : ""}` },
         h("div", { class: "eyebrow" }, "Scope"), h("strong", {}, a.scope.label),
         h("div", { class: "small mono" }, `${a.scope.trades} trades · ${a.scope.journaled_trades} with journals`,
@@ -56,7 +61,7 @@ export async function analyticsView(root) {
   };
 
   const renderTabs = (a) => {
-    const tabs = [["overview", "Overview & setups"], ["calibration", "Prediction calibration"], ["psychology", "Psychology"],
+    const tabs = [["overview", "Overview & setups"], ["calibration", "Prediction calibration"], ["dashboard", "Psychology dashboard"], ["psychology", "Psychology conditions & tags"],
       ["why", "Why did I take this trade?"], ["contradictions", "Process consistency"], ["patterns", "Repeated behaviour"]];
     const body = h("div", {});
     const bar = h("div", { class: "tabs", role: "tablist" }, tabs.map(([k, l]) => h("button", { role: "tab", class: q.tab === k ? "active" : "", "aria-selected": q.tab === k,
@@ -94,6 +99,11 @@ export async function analyticsView(root) {
               h("p", { class: "small muted" }, c.invalidation.note))),
         ];
       },
+      dashboard: () => [
+        h("p", { class: "callout small" }, a.psychology_dashboard.note, ` Based on ${a.psychology_dashboard.journaled_trades} journaled trades.`),
+        table([...STATS_HEAD, "Identified by"], a.psychology_dashboard.items.map((s) =>
+          statsRow(s.item, s, [h("td", { class: "small muted" }, s.identified_by, s.n ? h("div", {}, evidence(s.positions)) : null)]))),
+      ],
       psychology: () => [
         h("p", { class: "callout small" }, a.psychology.note),
         h("h2", {}, "Pre-trade states (recorded before the outcome)"),

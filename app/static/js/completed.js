@@ -74,6 +74,7 @@ export async function completedDetailView(root, rid) {
       h("div", {}, h("div", { class: "eyebrow" }, `Completed review · trade #${t.chrono_seq}`), h("h1", {}, `${t.instrument} · ${t.entry_local.slice(0, 16)}`),
         h("p", { class: "small muted mono" }, `review ${r.id} · started ${r.started_at} · locked ${r.thesis_locked_at} · revealed ${r.outcome_revealed_at} · completed ${r.completed_at}`)),
       h("a", { class: "btn", href: "#/completed" }, "← Completed list")),
+    timelinePanel(r),
     h("div", { class: "review-grid" },
       h("div", { class: "stack" }, h("div", { class: "panel" }, chartBox), h("div", { class: "panel" }, h("h2", {}, "Outcome"), outcomePanel(r.post.outcome))),
       h("div", { class: "stack" },
@@ -94,4 +95,24 @@ export async function completedDetailView(root, rid) {
           } }, "Save annotation")))));
   draw();
   return () => handle && handle.destroy();
+}
+
+// Spec §40: the life of one trade, from the market before entry to the next trade being unlocked.
+function timelinePanel(r) {
+  const t = r.trade, th = r.thesis.answers, po = r.post.answers, oc = r.post.outcome, ctx = r.entry_context || {};
+  const utc = (s) => (s ? s.replace("T", " ").slice(0, 16) + " UTC" : "—");
+  const steps = [
+    ["Market before entry", `${t.chart_instrument} ${ctx.trend_last_hour ? `· ${ctx.trend_last_hour} last hour` : ""}${ctx.above_ema !== undefined ? ` · ${ctx.above_ema ? "above" : "below"} EMA` : ""}${ctx.nearest_pivot ? ` · nearest pivot ${ctx.nearest_pivot}` : ""}`, "market"],
+    ["Trade decision", th.one_sentence || th.primary_reason || "—", "decision"],
+    ["Entry", `${(t.entry_local || "").slice(0, 16)} · ${t.direction || "—"} · first order ${fmt(t.initial_entry_price ?? t.entry_price)}`, "entry"],
+    ["Original thesis locked", utc(r.thesis_locked_at), "locked"],
+    ["Outcome revealed", `${utc(r.outcome_revealed_at)} · ${oc.result || "—"}${oc.exit && oc.exit.kind === "expiry_settlement" ? " · held to expiry" : ""}`, "reveal"],
+    ["Post-trade analysis", `${po.hindsight_assessment || "—"}`, "analysis"],
+    ["Psychology tagging", po.psychology_influenced === "No" ? "No influence identified" : (po.psychology_flags || []).join(", ") || po.psychology_influenced || "—", "psych"],
+    ["Lessons / observations", po.lesson || po.flawed_part || "—", "lesson"],
+    ["Next chronological trade unlocked", utc(r.completed_at), "next"],
+  ];
+  return h("div", { class: "panel" }, h("h2", {}, "Trade timeline"),
+    h("ol", { class: "timeline" }, steps.map(([k, v], i) => h("li", {}, h("span", { class: "tl-dot" }, String(i + 1)),
+      h("div", {}, h("div", { class: "tl-title" }, k), h("div", { class: "small muted" }, v))))));
 }

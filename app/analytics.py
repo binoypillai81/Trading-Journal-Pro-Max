@@ -51,7 +51,61 @@ DECLARED_RULE_TYPES = {
     "min_setup_quality": "Minimum setup quality score",
     "avoid_emotions": "Do not trade when experiencing these states",
     "only_setups": "Only trade these setups",
+    "require_confirmation": "Only enter after the confirming 15-minute candle has closed",
 }
+
+# Spec §36 psychology dashboard: fixed items and how each is identified.
+# basis: "stated" (pre-trade answers), "flagged" (post-outcome reflection), "objective" (computed from data)
+PSYCH_ITEMS = [
+    ("FOMO", "stated pre-trade state FOMO, influence 'Fear of missing the move', or reflection flags FOMO / Fear of missing out",
+     lambda r: "FOMO" in _emo(r) or "Fear of missing the move" in _infl(r) or {"FOMO", "Fear of missing out"} & _flags(r)),
+    ("Revenge", "pre-trade 'Revenge feeling' / 'Desire to recover losses', or flags Revenge trading / Trying to recover previous loss",
+     lambda r: {"Revenge feeling", "Desire to recover losses"} & _emo(r) or {"Revenge trading", "Trying to recover previous loss"} & _flags(r)),
+    ("Overconfidence", "pre-trade state Overconfident", lambda r: "Overconfident" in _emo(r)),
+    ("Underconfidence", "pre-trade state Underconfident", lambda r: "Underconfident" in _emo(r)),
+    ("Boredom", "pre-trade state Bored or influence Boredom", lambda r: "Bored" in _emo(r) or "Boredom" in _infl(r)),
+    ("Impatience", "pre-trade state Impatient", lambda r: "Impatient" in _emo(r)),
+    ("Rule violation", "rules followed answered Partially or Not at all", lambda r: r["thesis"].get("rules_followed") in ("Partially", "Not at all")),
+    ("Premature exit", "reflection flag Premature exit", lambda r: "Premature exit" in _flags(r)),
+    ("Holding loser", "reflection flag Holding loser, or objectively held past the stated stop/invalidation",
+     lambda r: "Holding loser" in _flags(r) or (r["outcome"].get("held_beyond_stop_min") or 0) > 5 or bool(r["outcome"].get("invalidation_violated"))),
+    ("Moving stop", "reflection flag Moving stop", lambda r: "Moving stop" in _flags(r)),
+    ("Oversizing", "reflection flag Increasing size", lambda r: "Increasing size" in _flags(r)),
+    ("Trading without setup", "reflection flag Trading without setup, or predefined setup answered No",
+     lambda r: "Trading without setup" in _flags(r) or r["thesis"].get("predefined_setup") == "No"),
+]
+
+
+def _emo(r):
+    return set(r["thesis"].get("emotions") or [])
+
+
+def _flags(r):
+    return set(r["post"].get("psychology_flags") or [])
+
+
+def _infl(r):
+    return set(r["thesis"].get("outside_influences") or [])
+
+
+def psychology_dashboard(recs) -> dict:
+    j = [r for r in recs if r["journaled"]]
+    items = []
+    for name, how, test in PSYCH_ITEMS:
+        g = [r for r in j if test(r)]
+        st = _stats(g, len(j))
+        items.append({"item": name, "identified_by": how, **st,
+                      "wording": f"Trades identified as '{name}' had {st['wins']} wins and {st['losses']} losses across {len(g)} trades."})
+    return {"items": items, "journaled_trades": len(j),
+            "note": "Occurrences and associated outcomes only. Co-occurrence is not causation."}
+
+
+def structure_signature(ctx: dict) -> str | None:
+    """A coarse description of the chart at entry, built from pre-entry facts only."""
+    if not ctx or ctx.get("above_ema") is None or not ctx.get("trend_last_hour") or not ctx.get("nearest_pivot"):
+        return None
+    return (f"{'above' if ctx['above_ema'] else 'below'} EMA · {ctx['trend_last_hour']} last hour · "
+            f"{ctx.get('pivot_side', 'near')} {ctx['nearest_pivot']}")
 
 
 def _reliability(n: int) -> str:
@@ -421,6 +475,14 @@ def contradictions(conn, recs):
     g = [r for r in j if r["post"].get("hindsight_assessment") == "Mostly hindsight"]
     add("Reasoning later judged to be mostly hindsight", f"{len(g)} trades.", g, "USER'S STATED BELIEF")
 
+    wants_conf = [r for r in j if "Confirmation" in _themes(" ".join(filter(None, [r["thesis"].get("primary_reason"),
+                  r["thesis"].get("one_sentence"), r["thesis"].get("chart_observation")])))
+                  or r["thesis"].get("confirmation_before_entry") in ("Yes — it had completed", "No — I entered before it completed")]
+    g = [r for r in wants_conf if r["ctx"].get("entered_mid_candle") or r["thesis"].get("confirmation_before_entry") == "No — I entered before it completed"]
+    add("Entered before the stated confirmation completed",
+        f"{len(g)} of {len(wants_conf)} trades that relied on confirmation were entered while the 15-minute candle was still forming, "
+        "or you said the confirmation had not completed yet.", g, "FACT vs USER'S STATED BELIEF")
+
     # Declared rules
     rules = s.get("declared_rules") or []
     for rule in rules:
@@ -458,6 +520,9 @@ def contradictions(conn, recs):
         elif t == "avoid_emotions" and v:
             g = [r for r in j if set(v) & set(r["thesis"].get("emotions") or [])]
             add(name, f"{len(g)} trades were taken while recording one of: {', '.join(v)}.", g, "USER'S STATED BELIEF")
+        elif t == "require_confirmation":
+            g = [r for r in j if r["ctx"].get("entered_mid_candle") or r["thesis"].get("confirmation_before_entry") == "No — I entered before it completed"]
+            add(name, f"{len(g)} of {len(j)} trades were entered while a 15-minute candle was still forming, or before the stated confirmation completed.", g, "FACT")
         elif t == "only_setups" and v:
             g = [r for r in j if r["thesis"].get("setups") and not set(r["thesis"]["setups"]) & set(v)]
             add(name, f"{len(g)} trades used none of the allowed setups.", g, "USER'S STATED BELIEF")
@@ -506,6 +571,45 @@ def patterns(recs, scope_label: str):
         add("reaction_after_loss", "Frustration / recovery states after losses",
             f"{len(emo_after)} of {len(after_loss)} same-day trades following a loss recorded frustration, revenge, impatience or a desire to recover.", emo_after)
 
+    after_win = [cur for prev, cur in zip(ordered, ordered[1:])
+                 if prev["date"] == cur["date"] and prev["exit_epoch"] and prev["exit_epoch"] <= cur["entry_epoch"] and prev["result"] == "WIN"]
+    if len(gaps_loss) >= 2 and len(gaps_win) >= 2:
+        ml, mw = statistics.median(gaps_loss), statistics.median(gaps_win)
+        if mw < ml * 0.6:
+            add("reaction_after_win", "Faster re-entry after wins",
+                f"Median time to the next same-day trade was {mw:.0f} min after a win vs {ml:.0f} min after a loss.", after_win,
+                "Quick re-entries after wins may reflect confidence carrying over rather than a fresh setup.")
+    if after_win:
+        buoyant = [r for r in after_win if {"Confident", "Overconfident", "Excited"} & _emo(r)]
+        base = sum(1 for r in j if {"Confident", "Overconfident", "Excited"} & _emo(r)) / len(j) if j else 0
+        add("reaction_after_win", "Confident / excited states after wins",
+            f"{len(buoyant)} of {len(after_win)} same-day trades following a win recorded confidence, overconfidence or excitement "
+            f"(across all journaled trades: {100 * base:.0f}%).", buoyant)
+        loss_after_win = [r for r in after_win if r["result"] == "LOSS"]
+        add("reaction_after_win", "Losses on the trade after a win",
+            f"{len(loss_after_win)} of {len(after_win)} same-day trades following a win were losses.", loss_after_win)
+
+    late = [r for r in j if r["ctx"].get("move_last_hour") is not None and r["ctx"].get("reference_price")
+            and r["outcome"].get("market_bias")
+            and (r["ctx"]["move_last_hour"] if r["outcome"]["market_bias"] == "UP" else -r["ctx"]["move_last_hour"])
+                >= 0.004 * r["ctx"]["reference_price"]
+            and r["mfe"] is not None and r["mae"] is not None and abs(r["mae"]) > r["mfe"]]
+    add("entry_timing", "Possible late entries",
+        f"{len(late)} trades were entered after the underlying had already moved at least 0.4% in the trade's direction over "
+        "the preceding hour, and then moved further against the position than in its favour.", late,
+        "May indicate chasing a move that had already happened.")
+
+    by_struct = defaultdict(list)
+    for r in j:
+        sig = structure_signature(r["ctx"])
+        if sig:
+            by_struct[(sig, r["outcome"].get("market_bias"))].append(r)
+    for (sig, bias), g in sorted(by_struct.items(), key=lambda kv: -len(kv[1])):
+        if len(g) >= 3:
+            wins = sum(1 for r in g if r["result"] == "WIN")
+            add("chart_structure", f"Similar chart structure at entry: {sig} ({'bullish' if bias == 'UP' else 'bearish'} trades)",
+                f"{len(g)} trades were entered in this structure ({wins} wins, {sum(1 for r in g if r['result'] == 'LOSS')} losses).", g)
+
     adverse_first = [r for r in j if r["outcome"].get("adverse_first") and r["mae"] is not None and r["mfe"] is not None and abs(r["mae"]) > r["mfe"]]
     add("entry_timing", "Adverse move first, larger than favourable move",
         f"{len(adverse_first)} trades moved against the position first and further than they ever moved in favour.", adverse_first,
@@ -552,7 +656,8 @@ def analytics(conn, *, session_id=None, scope="session_before_current", upto=Non
                    else "Patterns across completed reviews in all sessions")
     return {"scope": info, "overview": overview(recs), "setups": setup_analysis(recs), "calibration": calibration(recs),
             "psychology": psychology(recs), "why": why_analysis(recs), "contradictions": contradictions(conn, recs),
-            "patterns": patterns(recs, scope_label),
+            "patterns": patterns(recs, scope_label), "psychology_dashboard": psychology_dashboard(recs),
+            "evidence_index": {str(r["seq"]): r["review_id"] for r in recs if r["review_id"]},
             "classification_legend": ["FACT", "USER'S STATED BELIEF", "OBSERVED PATTERN", "POSSIBLE INTERPRETATION"]}
 
 
@@ -609,6 +714,48 @@ def observations_for_trade(conn, sid: int, trade_id: int) -> list[dict]:
         out.append({"status": status, "summary": f"You have now reviewed {n} {what}.", "facts": facts,
                     "common_reasoning": [k for k, _ in reasons.most_common(3)],
                     "potential_recurring_issues": issues, "issues_label": "POSSIBLE INTERPRETATION",
-                    "evidence_positions": [r["seq"] for r in g], "reliability": _reliability(n),
+                    "evidence_positions": [r["seq"] for r in g], "evidence_reviews": {str(r["seq"]): r["review_id"] for r in g},
+                    "reliability": _reliability(n),
                     "scope": f"Patterns visible in trades already reviewed (positions 1–{t['chrono_seq']} of this session). Future trades were not used."})
     return out
+
+
+def _num_txt(v) -> str:
+    if v is None:
+        return "—"
+    return str(int(v)) if float(v).is_integer() else f"{v:g}"
+
+
+def trade_summary(thesis: dict, post: dict, oc: dict, ctx: dict) -> dict:
+    """Structured summary of one completed review. Facts are separated from stated beliefs."""
+    verdict = lambda item: next((r["verdict"] for r in oc.get("thesis_vs_reality", []) if r["item"] == item), None)
+    facts = [f"Result: {oc.get('result') or 'unknown'}"]
+    for item in ("Direction", "Expected move", "Expected time", "Invalidation", "Stop"):
+        v = verdict(item)
+        if v and not v.startswith("Not evaluable") and not v.startswith("Not measurable") and v != "No market data":
+            facts.append(f"{item}: {v}")
+    if ctx.get("entered_mid_candle") is not None:
+        facts.append("Entered while the 15-minute candle was still forming" if ctx["entered_mid_candle"] else "Entered at a 15-minute candle open")
+    if oc.get("multi_entry"):
+        facts.append(f"Multi-entry: added {oc['re_add_episodes']} time(s) after a partial exit")
+    if (oc.get("exit") or {}).get("kind") == "expiry_settlement":
+        facts.append("Held to expiry")
+    beliefs = [f"Setup: {', '.join(thesis.get('setups') or []) or '—'}",
+               f"Confidence {_num_txt(thesis.get('confidence'))}/100 vs setup quality {_num_txt(thesis.get('setup_quality'))}/100",
+               f"Pre-trade state: {', '.join(thesis.get('emotions') or []) or '—'}",
+               f"Rules followed: {thesis.get('rules_followed') or '—'}",
+               f"Hindsight check: {post.get('hindsight_assessment') or '—'}"]
+    if post.get("psychology_flags"):
+        beliefs.append(f"Psychology flags: {', '.join(post['psychology_flags'])}")
+    questions = []
+    if verdict("Direction") == "Correct" and oc.get("result") == "LOSS":
+        questions.append("The direction call was right but the trade lost — was it entry timing, stop placement or exit?")
+    if verdict("Direction") == "Incorrect" and oc.get("result") == "WIN":
+        questions.append("The trade won although the market moved against the thesis — what made it profitable?")
+    if (thesis.get("confidence") or 0) - (thesis.get("setup_quality") or 0) >= 30:
+        questions.append("Confidence was well above your own setup-quality score — where did the extra confidence come from?")
+    if post.get("hindsight_assessment") in ("Mostly hindsight", "I cannot tell"):
+        questions.append("Which part of the reasoning can you point to on the blind chart?")
+    return {"status": "OBSERVATION — NOT YET A RULE (single trade)", "facts": facts, "facts_label": "FACT",
+            "stated": beliefs, "stated_label": "USER'S STATED BELIEF", "lesson": post.get("lesson"),
+            "questions": questions, "questions_label": "QUESTIONS FOR FURTHER INVESTIGATION"}

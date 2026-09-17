@@ -105,7 +105,9 @@ export function stateChip(state) {
 
 export function debounce(fn, ms) {
   let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  const run = (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  run.cancel = () => clearTimeout(t);
+  return run;
 }
 
 export function table(headers, rows, { cls = "" } = {}) {

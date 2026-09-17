@@ -235,8 +235,47 @@ def _floor_15m(epoch: int, tz: str) -> int:
 
 
 def _bar_dict(r) -> dict:
-    return {"epoch": r["epoch"], "local": r["local"], "session_date": r["session_date"],
-            "open": r["open"], "high": r["high"], "low": r["low"], "close": r["close"]}
+    d = {"epoch": r["epoch"], "local": r["local"], "session_date": r["session_date"],
+         "open": r["open"], "high": r["high"], "low": r["low"], "close": r["close"]}
+    if "volume" in r.keys():
+        d["volume"] = r["volume"]
+    return d
+
+
+def swing_levels(bars: list[dict], lookaround: int = 2, keep: int = 3) -> list[dict]:
+    """Support/resistance from swing highs and lows (fractals) in COMPLETED bars.
+
+    A bar is a swing high when its high exceeds the highs of ``lookaround`` bars on each side (lows
+    likewise). The bars after a swing must already be complete, so only bars with ``lookaround``
+    completed successors qualify — no information after the cutoff is used.
+    """
+    out = []
+    for i in range(lookaround, len(bars) - lookaround):
+        win = bars[i - lookaround: i + lookaround + 1]
+        b = bars[i]
+        if all(b["high"] > x["high"] for j, x in enumerate(win) if j != lookaround):
+            out.append({"kind": "resistance", "price": b["high"], "local": b["local"]})
+        if all(b["low"] < x["low"] for j, x in enumerate(win) if j != lookaround):
+            out.append({"kind": "support", "price": b["low"], "local": b["local"]})
+    res = [x for x in out if x["kind"] == "resistance"][-keep:]
+    sup = [x for x in out if x["kind"] == "support"][-keep:]
+    return res + sup
+
+
+def session_vwap(bars: list[dict]) -> tuple[bool, list[dict]]:
+    """Cumulative session VWAP per completed bar; unavailable when the series has no volume (e.g. indices)."""
+    if not bars or not any((b.get("volume") or 0) > 0 for b in bars):
+        return False, []
+    pts, cur_day, pv, vol = [], None, 0.0, 0.0
+    for b in bars:
+        if b["session_date"] != cur_day:
+            cur_day, pv, vol = b["session_date"], 0.0, 0.0
+        v = b.get("volume") or 0
+        pv += (b["high"] + b["low"] + b["close"]) / 3 * v
+        vol += v
+        if vol > 0:
+            pts.append({"epoch": b["epoch"], "local": b["local"], "value": pv / vol})
+    return True, pts
 
 
 MIN_FULL_SESSION_BARS = 20  # sessions with fewer 15m bars (Muhurat, special Saturdays, partial data) are not used for pivots
@@ -304,7 +343,7 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
     ema_len = int(s["ema_length"])
     warm = max(ema_len * 10, 200)
     display = [_bar_dict(r) for r in conn.execute(
-        """SELECT epoch, local, session_date, open, high, low, close FROM market_bars
+        """SELECT epoch, local, session_date, open, high, low, close, volume FROM market_bars
            WHERE instrument=? AND timeframe='15m' AND session_date >= ? AND epoch + 900 <= ? ORDER BY epoch""",
         (inst, display_start_date, E))]
     first_display_epoch = display[0]["epoch"] if display else E
@@ -351,6 +390,19 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
     if not display:
         limitations.append(f"No 15-minute market data for {inst} before this entry. Import market data to see the chart.")
 
+    # --- where the entry falls inside its 15-minute candle (spec §31)
+    zone = ZoneInfo(tz)
+    secs_in = E - forming_open
+    candle_label = (f"{datetime.fromtimestamp(forming_open, zone).strftime('%H:%M')}–"
+                    f"{datetime.fromtimestamp(forming_open + 900, zone).strftime('%H:%M')}")
+    if secs_in == 0:
+        where = f"at the open of the {candle_label} candle — no part of that candle was known yet"
+    else:
+        where = (f"{secs_in // 60} min {secs_in % 60:02d} s into the {candle_label} candle — "
+                 f"it was still forming; the previous candle was the last completed one")
+    entry_position = {"candle": candle_label, "seconds_into_candle": secs_in, "at_candle_open": secs_in == 0,
+                      "mid_candle": secs_in > 0, "description": f"Entry {datetime.fromtimestamp(E, zone).strftime('%H:%M:%S')} is {where}."}
+
     # --- EMA on completed bars only
     closes = [w["close"] for w in warmup] + [b["close"] for b in display]
     ema_all = ema(closes, ema_len)[len(warmup):]
@@ -385,7 +437,11 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
                    "sets": pivot_sets},
         "day_open": day_open,
         "entry": {"epoch": trade["entry_epoch"], "price": trade.get("entry_price"), "reference_price": reference,
-                  "price_basis": basis},
+                  "price_basis": basis, "position": entry_position},
+        "support_resistance": {"method": "swing highs/lows (2 completed bars each side) from completed candles only",
+                               "levels": swing_levels(display)},
+        "vwap": dict(zip(("available", "points"), session_vwap(display)),
+                     note="Needs volume; index series have none, so VWAP is unavailable for them."),
         "limitations": limitations,
         "max_epoch_in_payload": max([b["epoch"] for b in display] + ([forming_open] if forming else []), default=None),
     }
@@ -395,7 +451,7 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
 
     if reveal_until_epoch is not None:
         after = [_bar_dict(r) for r in conn.execute(
-            """SELECT epoch, local, session_date, open, high, low, close FROM market_bars
+            """SELECT epoch, local, session_date, open, high, low, close, volume FROM market_bars
                WHERE instrument=? AND timeframe='15m' AND epoch + 900 > ? AND epoch <= ? ORDER BY epoch""",
             (inst, E, int(reveal_until_epoch)))]
         all_bars = display + after

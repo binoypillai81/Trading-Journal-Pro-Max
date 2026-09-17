@@ -19,7 +19,7 @@ function css(name) {
 const PIVOT_COLORS = { P: "--pivot-p", R1: "--pivot-r", R2: "--pivot-r", R3: "--pivot-r", S1: "--pivot-s", S2: "--pivot-s", S3: "--pivot-s" };
 
 export function renderChart(container, data, opts = {}) {
-  const toggles = Object.assign({ ema: true, pivots: true, prevDay: false, dayOpen: false }, opts.toggles || {});
+  const toggles = Object.assign({ ema: true, pivots: true, prevDay: false, dayOpen: false, sr: false, vwap: false }, opts.toggles || {});
   const wrap = h("div", { class: "chart-wrap" });
   const canvas = h("div", { class: "chart-canvas" });
   const legend = h("div", { class: "chart-legend" });
@@ -96,6 +96,16 @@ export function renderChart(container, data, opts = {}) {
     series.createPriceLine({ price: today.prior_day.low, color: css("--muted"), lineStyle: 1, lineWidth: 1, title: "PDL" });
     series.createPriceLine({ price: today.prior_day.close, color: css("--muted"), lineStyle: 3, lineWidth: 1, title: "PDC" });
   }
+  if (toggles.sr && data.support_resistance) {
+    for (const lv of data.support_resistance.levels) {
+      series.createPriceLine({ price: lv.price, color: css(lv.kind === "resistance" ? "--pivot-r" : "--pivot-s"), lineStyle: 3, lineWidth: 1,
+        title: `${lv.kind === "resistance" ? "Swing R" : "Swing S"} ${lv.local.slice(5, 16)}` });
+    }
+  }
+  if (toggles.vwap && data.vwap && data.vwap.available) {
+    const vs = chart.addLineSeries({ color: css("--muted"), lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: "VWAP" });
+    vs.setData(data.vwap.points.map((p) => ({ time: t(p.local), value: p.value })));
+  }
   if (toggles.dayOpen && data.day_open) {
     series.createPriceLine({ price: data.day_open, color: css("--muted"), lineStyle: 3, lineWidth: 1, title: "Open" });
   }
@@ -131,14 +141,19 @@ export function renderChart(container, data, opts = {}) {
   chart.timeScale().setVisibleLogicalRange({ from, to });
 
   // Toolbar toggles
-  const mk = (key, label) => h("label", { class: "toggle" },
-    h("input", { type: "checkbox", checked: toggles[key], onChange: (e) => { opts.onToggle && opts.onToggle({ ...toggles, [key]: e.target.checked }); } }),
+  const mk = (key, label, disabled = false, title = null) => h("label", { class: "toggle", title },
+    h("input", { type: "checkbox", checked: toggles[key] && !disabled, disabled, onChange: (e) => { opts.onToggle && opts.onToggle({ ...toggles, [key]: e.target.checked }); } }),
     label);
   toolbar.append(
     h("span", { class: "chart-title" }, `${data.instrument} · 15m`),
     mk("ema", `EMA ${data.ema.length}`), mk("pivots", `Pivots (${data.pivots.method})`), mk("prevDay", "Prev-day H/L/C"), mk("dayOpen", "Day open"),
+    mk("sr", "Swing S/R", false, data.support_resistance ? data.support_resistance.method : null),
+    mk("vwap", "VWAP", !(data.vwap && data.vwap.available), data.vwap && !data.vwap.available ? data.vwap.note : null),
     h("span", { class: revealed ? "mode-badge revealed" : "mode-badge blind" }, revealed ? "REVEALED" : "BLIND · cut at " + data.cutoff_local.slice(0, 16)));
 
+  if (data.entry.position) {
+    wrap.insertBefore(h("div", { class: "small muted" }, "⏱ ", data.entry.position.description), legend);
+  }
   legend.append(...[
     h("span", {}, h("i", { class: "sw", style: { background: css("--ema") } }), `EMA ${data.ema.length} (completed candles only)`),
     h("span", {}, h("i", { class: "sw", style: { background: css("--pivot-p") } }), "Pivot P"),

@@ -23,6 +23,7 @@ TIMEFRAME_MINUTES = {"< 15 minutes": (0, 15), "15–30 minutes": (15, 30), "30�
                      "No specific expectation": (None, None)}
 DAY_PNL_INFLUENCE = ["Yes — trying to recover a loss", "Yes — trying to protect gains", "Yes — trying to reach a daily target",
                      "Yes — other", "No", "Unsure", "First trade of the day"]
+CONFIRMATION_OPTIONS = ["Yes — it had completed", "No — I entered before it completed", "No confirmation needed for this setup", "Unsure"]
 INFLUENCES = ["Previous loss", "Previous win", "News", "Fear of missing the move", "P&L", "Position sizing",
               "Other person's opinion", "Market suddenly moving", "Desire to trade", "Boredom", "Nothing outside my plan"]
 PSYCH_FLAGS = ["FOMO", "Revenge trading", "Overtrading", "Fear of missing out", "Fear of loss", "Moving stop",
@@ -96,6 +97,8 @@ THESIS_SECTIONS = [
          "label": "Was this trade part of a predefined trading setup?"},
         {"name": "rules_followed", "type": "single", "options": ["Completely", "Mostly", "Partially", "Not at all", "I had no defined rules"],
          "required": True, "label": "Did you follow your trading rules?"},
+        {"name": "confirmation_before_entry", "type": "single", "options": CONFIRMATION_OPTIONS,
+         "label": "Had the confirmation you were waiting for (e.g. a candle closing beyond the level) already happened when you entered?"},
         {"name": "outside_influences", "type": "multi", "options": INFLUENCES,
          "label": "Did anything influence the trade that was NOT part of your trading plan?"},
         {"name": "outside_influence_text", "type": "text", "label": "Describe it"},

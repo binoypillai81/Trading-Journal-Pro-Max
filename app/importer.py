@@ -206,6 +206,23 @@ def sample_rows(conn, batch_id: int, n: int = 5) -> list[dict]:
     return rows[:n]
 
 
+def split_original(value: str | None) -> tuple[str, str]:
+    """Split an original timestamp text into (date part, time part incl. any timezone marker) for display."""
+    if not value:
+        return "", ""
+    text = value.split(" [tz column")[0]
+    m = None
+    for cand in re.finditer(r"(?<![+\-\d])\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?\s*(?:[AaPp][Mm])?", text):
+        m = cand
+        break
+    if not m:
+        return text.strip(), ""
+    date_part = text[: m.start()].rstrip(" T")
+    if not date_part.strip():  # time written before the date
+        return text[m.end():].strip(), m.group().strip()
+    return date_part.strip(), text[m.start():].strip()
+
+
 def _opt(v):
     s = (v or "").strip().upper()
     return {"CE": "CE", "CALL": "CE", "C": "CE", "PE": "PE", "PUT": "PE", "P": "PE"}.get(s)
@@ -602,7 +619,8 @@ def preview(conn, batch_id: int) -> dict:
             "chronological_position": pos[id(t)],
             "trade_id": t["id"], "trade_ref": t["trade_ref"], "import_row": t["import_row"],
             "instrument": t["instrument"], "chart_instrument": t["chart_instrument"],
-            "original_entry": t["entry_original"], "normalized_entry": t["entry_local"],
+            "original_entry": t["entry_original"], "original_date": split_original(t["entry_original"])[0],
+            "original_time": split_original(t["entry_original"])[1], "normalized_entry": t["entry_local"],
             "tz_source": t["entry_tz_source"], "entry_price": t["entry_price"],
             "direction": t["direction"], "exec_seq": t["exec_seq"],
             "status": status, "warnings": warnings,

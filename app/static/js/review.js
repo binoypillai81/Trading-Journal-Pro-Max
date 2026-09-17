@@ -1,6 +1,7 @@
 import { api, h, mount, fmt, signed, toast, errorBox, loading, store, debounce, chip, modal, table } from "./lib.js";
 import { ctx, refreshMeta, activeSession, noSession, progressBar } from "./app.js";
 import { renderChart } from "./chart.js";
+import { evidenceLinks } from "./analytics.js";
 
 const STEPS = ["Observe", "Setup", "Direction", "Reason", "Expectation", "Risk", "Confidence", "Psychology", "Process", "Lock thesis", "Reveal", "Reflect", "Complete"];
 
@@ -143,7 +144,7 @@ function observationCards(list) {
     h("ul", { class: "small" }, o.facts.map((f) => h("li", {}, f))),
     o.common_reasoning.length ? h("p", { class: "small" }, "Common stated reasoning: ", o.common_reasoning.join(", ")) : null,
     o.potential_recurring_issues.length ? h("div", { class: "small" }, chip("POSSIBLE INTERPRETATION", "label-interp"), h("ul", {}, o.potential_recurring_issues.map((x) => h("li", {}, x)))) : null,
-    h("p", { class: "small muted" }, `Evidence: trades #${o.evidence_positions.join(", #")} · ${o.scope}`)));
+    h("p", { class: "small muted" }, "Evidence: ", evidenceLinks(o.evidence_positions, o.evidence_reviews || {}), ` · ${o.scope}`)));
 }
 
 // ------------------------------------------------------------------ main view
@@ -277,6 +278,7 @@ export async function reviewView(root) {
         if (Object.keys(v.prompts).length && !ack.checked) return toast("Make the flagged answers more specific, or confirm you have been as specific as you honestly can", "error");
         clean.specificity_acknowledged = ack.checked;
         lockBtn.disabled = true;
+        saveDraft.cancel();
         try {
           await api("POST", `/api/reviews/${rv.id}/lock`, { answers: clean, confirm: true });
           toast("Thesis locked. It can never be changed.");
@@ -332,6 +334,7 @@ export async function reviewView(root) {
               if (Object.keys(v.errors).length) { toast("Complete the required fields", "error"); return renderPost(v.errors); }
               if (Object.keys(prompts).length && !answers.specificity_acknowledged) { toast("Some answers are vague — see the prompts", "error"); return renderPost(); }
               e.target.disabled = true;
+              saveDraft.cancel();
               try {
                 const done = await api("POST", `/api/reviews/${rv.id}/complete`, answers);
                 store.set(sectionKey, 0);
@@ -356,6 +359,14 @@ function completionScreen(done, session) {
     h("div", { class: "row gap", style: { justifyContent: "center", margin: "1.25rem 0" } },
       !done.finished ? h("button", { id: "continue-chrono", class: "primary", onClick: () => { location.hash = "#/review"; window.dispatchEvent(new HashChangeEvent("hashchange")); } }, "Continue Chronologically") : null,
       h("a", { class: "btn", href: "#/queue" }, "Return to Review Queue")),
+    done.trade_summary ? h("div", { class: "panel obs", style: { textAlign: "left", marginTop: "1.5rem" } },
+      h("div", { class: "row between gap" }, h("h2", {}, "Summary of this trade"), chip(done.trade_summary.status, "label-pattern")),
+      h("div", { class: "grid-2" },
+        h("div", {}, chip(done.trade_summary.facts_label, "label-fact"), h("ul", { class: "small" }, done.trade_summary.facts.map((f) => h("li", {}, f)))),
+        h("div", {}, chip(done.trade_summary.stated_label, "label-belief"), h("ul", { class: "small" }, done.trade_summary.stated.map((f) => h("li", {}, f))))),
+      done.trade_summary.lesson ? h("p", { class: "small" }, h("strong", {}, "Your lesson: "), done.trade_summary.lesson) : null,
+      done.trade_summary.questions.length ? h("div", { class: "small" }, chip(done.trade_summary.questions_label, "label-interp"),
+        h("ul", {}, done.trade_summary.questions.map((q) => h("li", {}, q)))) : null) : null,
     h("h2", { style: { textAlign: "left", marginTop: "2rem" } }, "Observations from what you wrote"),
     h("p", { class: "small muted", style: { textAlign: "left" } }, "Candidate observations only — the tool does not create rules. Based solely on trades already reviewed."),
     observationCards(done.observations));

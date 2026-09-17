@@ -871,3 +871,106 @@ def test_exclude_current_trade_and_refuse_reviewed(client, market):
     client.post("/api/trades/restore", json={"trade_ids": [excluded[0]["trade_id"]]})
     cur = client.get(f"/api/sessions/{sid}/current").json()
     assert cur["trade"]["entry_local"].endswith("10:00:00") and cur["review"]["draft"]["primary_reason"] == "draft in progress"
+
+
+def test_chart_entry_position_swing_levels_and_vwap(client, market, db_env):
+    load_market(client, market)
+    px = lambda t: bar_at(market["one"], t)[1]
+    import_trades(client, simple_trades_csv([
+        ["1", "NIFTY", "2026-01-14 10:45:00+05:30", "2026-01-14 11:00:00+05:30", "BUY", 75, px("2026-01-14 10:45"), px("2026-01-14 11:00"), 5],
+        ["2", "NIFTY", "2026-01-14 12:07:30+05:30", "2026-01-14 12:30:00+05:30", "BUY", 75, px("2026-01-14 12:07"), px("2026-01-14 12:30"), 5],
+    ]))
+    sid = new_session(client)
+    rid = client.post(f"/api/sessions/{sid}/current/start").json()["id"]
+    c1 = client.get(f"/api/reviews/{rid}/chart").json()
+    assert c1["entry"]["position"]["at_candle_open"] and "at the open of the 10:45–11:00 candle" in c1["entry"]["position"]["description"]
+    complete_current(client, sid)
+    rid2 = client.post(f"/api/sessions/{sid}/current/start").json()["id"]
+    c2 = client.get(f"/api/reviews/{rid2}/chart").json()
+    pos = c2["entry"]["position"]
+    assert pos["mid_candle"] and pos["seconds_into_candle"] == 7 * 60 + 30 and "12:00–12:15 candle" in pos["description"]
+    # swing levels come only from completed candles, and each needs two completed candles after it
+    last_completed = c2["candles"][-1]["local"]
+    levels = c2["support_resistance"]["levels"]
+    assert levels and all(l["local"] < c2["candles"][-2]["local"] for l in levels)
+    assert all(l["local"] <= last_completed for l in levels)
+    # index data has no volume → VWAP unavailable
+    assert c2["vwap"]["available"] is False
+    ctx = client.get(f"/api/reviews/{rid2}").json()["entry_context"]
+    assert ctx["entered_mid_candle"] is True and ctx["trend_last_hour"] in ("rising", "falling", "mixed")
+
+
+def test_vwap_and_swing_helpers():
+    from app.market import session_vwap, swing_levels
+    bars = [{"epoch": i, "local": f"2026-01-14 10:{i:02d}:00", "session_date": "2026-01-14",
+             "high": h, "low": l, "close": c, "volume": v}
+            for i, (h, l, c, v) in enumerate([(10, 8, 9, 100), (12, 9, 11, 300), (11, 7, 8, 100), (9, 6, 7, 100), (13, 9, 12, 0)])]
+    ok, pts = session_vwap(bars)
+    assert ok and pts[1]["value"] == pytest.approx((9 * 100 + (32 / 3) * 300) / 400)
+    assert session_vwap([dict(b, volume=0) for b in bars]) == (False, [])
+    lv = swing_levels(bars)
+    assert {"kind": "resistance", "price": 12, "local": bars[1]["local"]} not in lv  # needs 2 bars on the left too
+    lv = swing_levels(bars, lookaround=1)
+    assert {"kind": "resistance", "price": 12, "local": bars[1]["local"]} in lv
+    assert {"kind": "support", "price": 6, "local": bars[3]["local"]} in lv
+
+
+def test_psychology_dashboard_confirmation_check_and_summary(client, market):
+    load_market(client, market)
+    px = lambda t: bar_at(market["one"], t)[1]
+    import_trades(client, simple_trades_csv([
+        ["1", "NIFTY", "2026-01-14 10:07:30+05:30", "2026-01-14 10:30:00+05:30", "BUY", 75, px("2026-01-14 10:07"), px("2026-01-14 10:30"), -5],
+        ["2", "NIFTY", "2026-01-14 11:00:00+05:30", "2026-01-14 11:30:00+05:30", "BUY", 75, px("2026-01-14 11:00"), px("2026-01-14 11:30"), 5],
+    ]))
+    client.put("/api/settings", json={"declared_rules": [{"type": "require_confirmation", "value": None}]})
+    sid = new_session(client)
+    t1 = good_thesis(emotions=["FOMO", "Impatient"], rules_followed="Partially",
+                     primary_reason="Waited for confirmation of the EMA reclaim with a strong close above the level",
+                     confirmation_before_entry="Yes — it had completed")
+    rid1, done = complete_current(client, sid, thesis=t1, post=good_post(psychology_influenced="Yes", psychology_flags=["Premature exit", "Increasing size"]))
+    s = done["trade_summary"]
+    assert s["status"].startswith("OBSERVATION — NOT YET A RULE")
+    assert "Entered while the 15-minute candle was still forming" in s["facts"]
+    assert any(x.startswith("Pre-trade state: FOMO") for x in s["stated"])
+    complete_current(client, sid, thesis=good_thesis(emotions=["Calm"]))
+    a = client.get("/api/analytics", params={"session_id": sid, "scope": "session_completed"}).json()
+    dash = {i["item"]: i for i in a["psychology_dashboard"]["items"]}
+    assert len(dash) == 12
+    assert dash["FOMO"]["positions"] == [1] and dash["Impatience"]["positions"] == [1]
+    assert dash["Rule violation"]["positions"] == [1] and dash["Premature exit"]["positions"] == [1]
+    assert dash["Oversizing"]["positions"] == [1] and dash["Boredom"]["n"] == 0
+    assert a["evidence_index"] == {"1": rid1, "2": a["evidence_index"]["2"]}
+    titles = {c["title"]: c for c in a["contradictions"]}
+    assert titles["Entered before the stated confirmation completed"]["evidence_positions"] == [1]
+    rule = [c for c in a["contradictions"] if c["title"].startswith("Declared rule: Only enter after the confirming")]
+    assert rule and rule[0]["evidence_positions"] == [1]
+
+
+def test_patterns_after_wins_late_entries_and_structures():
+    from app.analytics import patterns
+    def rec(seq, minute, result, mfe, mae, emotions=(), ctx=None, exit_after=5):
+        e = 1_768_300_000 + minute * 60
+        return {"seq": seq, "review_id": seq, "entry_epoch": e, "exit_epoch": e + exit_after * 60, "date": "2026-01-14",
+                "journaled": True, "result": result, "points": 1, "pnl": 1, "mfe": mfe, "mae": mae,
+                "thesis": {"emotions": list(emotions)}, "post": {},
+                "outcome": {"market_bias": "UP", "thesis_vs_reality": []},
+                "ctx": ctx or {"above_ema": True, "trend_last_hour": "rising", "nearest_pivot": "R1", "pivot_side": "above",
+                               "move_last_hour": 150, "reference_price": 24000}}
+    recs = [rec(1, 0, "WIN", 40, -10), rec(2, 6, "LOSS", 5, -30, ["Overconfident"]),
+            rec(3, 60, "WIN", 40, -10), rec(4, 66, "LOSS", 5, -30, ["Excited"]),
+            rec(5, 120, "LOSS", 5, -40), rec(6, 200, "LOSS", 5, -40)]
+    out = {p["title"]: p for p in patterns(recs, "test scope")}
+    assert out["Confident / excited states after wins"]["evidence_positions"] == [2, 4]
+    assert out["Losses on the trade after a win"]["evidence_positions"] == [2, 4]
+    late = out["Possible late entries"]["evidence_positions"]
+    assert late == [2, 4, 5, 6]
+    struct = [p for p in out.values() if p["kind"] == "chart_structure"]
+    assert struct and struct[0]["count"] == 6 and "above EMA · rising last hour · above R1" in struct[0]["title"]
+
+
+def test_preview_splits_original_date_and_time(client, market):
+    load_market(client, market)
+    px = bar_at(market["one"], "2026-01-13 10:42")[1]
+    _, p = import_trades(client, simple_trades_csv([["1", "NIFTY", "13-Jan-2026 10:42:00 +0530", "", "BUY", 75, px, px, 0]]), confirm=False)
+    row = p["rows"][0]
+    assert row["original_date"] == "13-Jan-2026" and row["original_time"] == "10:42:00 +0530"

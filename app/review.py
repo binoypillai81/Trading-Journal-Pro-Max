@@ -204,6 +204,14 @@ def _entry_context(conn, trade: dict, chart: dict) -> dict:
         recent = chart["candles"][-4:]
         ctx["last_4_closes_rising"] = all(b["close"] > a["close"] for a, b in zip(recent, recent[1:]))
         ctx["last_4_closes_falling"] = all(b["close"] < a["close"] for a, b in zip(recent, recent[1:]))
+        ctx["trend_last_hour"] = "rising" if ctx["last_4_closes_rising"] else "falling" if ctx["last_4_closes_falling"] else "mixed"
+        if len(chart["candles"]) >= 4:
+            ctx["move_last_hour"] = round(ref - chart["candles"][-4]["close"], 2)
+        if "nearest_pivot" in ctx:
+            ctx["pivot_side"] = "above" if ctx["dist_to_pivot"] >= 0 else "below"
+    pos = chart["entry"].get("position") or {}
+    ctx["seconds_into_candle"] = pos.get("seconds_into_candle")
+    ctx["entered_mid_candle"] = pos.get("mid_candle")
     return ctx
 
 
@@ -542,7 +550,9 @@ def complete(conn, rid: int, answers: dict) -> dict:
                    "data after the next trade's entry.")
     return {"completed_position": t["chrono_seq"], "total": len(seq), "next": {"entry_local": nxt["entry_local"]} if nxt else None,
             "finished": nxt is None, "hindsight_caution": caution,
-            "observations": analytics.observations_for_trade(conn, sid, rv["trade_id"])}
+            "observations": analytics.observations_for_trade(conn, sid, rv["trade_id"]),
+            "trade_summary": analytics.trade_summary(_thesis_answers(conn, rid), v["answers"], oc,
+                                                     json.loads(rv["entry_context_json"] or "{}"))}
 
 
 def skip_with_override(conn, sid: int, reason: str, confirmation: str) -> dict:
