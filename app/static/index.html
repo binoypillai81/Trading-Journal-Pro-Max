@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trade Time Machine</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏳</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <span class="brand-mark" aria-hidden="true">⏳</span>
+      <span><strong>Trade Time Machine</strong><small>blind chronological trade reconstruction</small></span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#/" data-nav="home">Sessions</a>
+      <a href="#/review" data-nav="review">Blind review</a>
+      <a href="#/queue" data-nav="queue">Queue</a>
+      <a href="#/completed" data-nav="completed">Completed</a>
+      <a href="#/analytics" data-nav="analytics">Analytics</a>
+      <a href="#/import/trades" data-nav="import">Import</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+    <div class="session-pill" id="session-pill"></div>
+  </header>
+  <main id="app" tabindex="-1"></main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
