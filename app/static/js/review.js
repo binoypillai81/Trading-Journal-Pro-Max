@@ -25,12 +25,26 @@ export function renderField(field, answers, onChange, { errors = {}, prompts = {
   } else if (field.type === "number") {
     control = h("input", { id, type: "number", step: "any", value: v ?? "", onInput: (e) => onChange(field.name, e.target.value === "" ? null : Number(e.target.value)) });
   } else if (field.type === "slider") {
+    // An unset slider still sits at 50, so commit on every interaction (a click on the thumb, keys,
+    // pointer release), not only on value changes — otherwise choosing 50 never registers.
     const num = h("input", { type: "number", min: 0, max: 100, value: v ?? "", "aria-label": field.label });
     const range = h("input", { id, type: "range", min: 0, max: 100, value: v ?? 50, "aria-label": field.label });
-    range.addEventListener("input", () => { num.value = range.value; onChange(field.name, Number(range.value)); });
-    num.addEventListener("input", () => { range.value = num.value; onChange(field.name, num.value === "" ? null : Number(num.value)); });
-    control = h("div", { class: "slider-row" }, h("span", { class: "small muted" }, "0"), range, h("span", { class: "small muted" }, "100"), num);
-    if (v === null || v === undefined) control.append(h("span", { class: "small muted" }, "not set"));
+    const status = h("span", { class: "small muted" }, v === null || v === undefined ? "not set — click or drag" : "");
+    const settled = (val) => {
+      range.classList.toggle("unset", val === null);
+      status.textContent = val === null ? "not set — click or drag" : "";
+      if (val !== null) control.closest(".field")?.querySelector(".field-error")?.remove();
+      onChange(field.name, val);
+    };
+    const fromRange = () => { num.value = range.value; settled(Number(range.value)); };
+    for (const ev of ["input", "change", "pointerup", "keyup"]) range.addEventListener(ev, fromRange);
+    num.addEventListener("input", () => {
+      const n = num.value === "" ? null : Math.max(0, Math.min(100, Number(num.value)));
+      if (n !== null) range.value = n;
+      settled(n);
+    });
+    if (v === null || v === undefined) range.classList.add("unset");
+    control = h("div", { class: "slider-row" }, h("span", { class: "small muted" }, "0"), range, h("span", { class: "small muted" }, "100"), num, status);
   } else {
     const multi = field.type === "multi";
     control = h("div", { class: "choices", role: multi ? "group" : "radiogroup", "aria-label": field.label },
