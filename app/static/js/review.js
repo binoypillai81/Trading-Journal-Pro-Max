@@ -187,7 +187,7 @@ export async function reviewView(root) {
   // ---- chart + facts (left)
   const chartBox = h("div", {});
   const limits = h("div", {});
-  const toggles = store.get("chartToggles", { ema: true, pivots: true, prevDay: false, dayOpen: false });
+  const toggles = store.get("chartToggles", { ema: true, pivots: true, prevDay: false, dayOpen: false, atr: true });
   const drawChart = async () => {
     try {
       const data = await api("GET", `/api/reviews/${rv.id}/chart`);

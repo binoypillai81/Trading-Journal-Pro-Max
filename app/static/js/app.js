@@ -184,6 +184,7 @@ async function settingsView() {
       ),
       h("div", { class: "panel" }, h("h2", {}, "Chart"),
         num("ema_length", "EMA length (15-minute candles)", "EMA is computed on completed candles available at the review time only.", { min: 2, max: 500 }),
+        num("atr_length", "ATR length (15-minute candles)", "Wilder ATR on completed candles only; shown in a pane under the chart.", { min: 2, max: 200 }),
         h("label", { class: "field" }, h("span", { class: "label" }, "Pivot method"),
           h("select", { onChange: (e) => save({ pivot_method: e.target.value }) },
             Object.keys(meta.pivot_formulas).map((k) => h("option", { value: k, selected: k === s.pivot_method }, k))),

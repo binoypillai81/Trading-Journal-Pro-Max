@@ -211,6 +211,7 @@ def test_07_no_future_candles_reach_frontend(client, market):
         if chart["forming_candle"]:
             assert chart["forming_candle"]["epoch"] <= E < chart["forming_candle"]["epoch"] + 900
         assert all(p["epoch"] + 900 <= E for p in chart["ema"]["points"])
+        assert all(p["epoch"] + 900 <= E for p in chart["atr"]["points"])
         assert "after_candles" not in chart and "exit" not in chart
         # No value from any bar that opens at/after the entry minute appears anywhere in the payload
         text = json.dumps(chart)
@@ -974,3 +975,19 @@ def test_preview_splits_original_date_and_time(client, market):
     _, p = import_trades(client, simple_trades_csv([["1", "NIFTY", "13-Jan-2026 10:42:00 +0530", "", "BUY", 75, px, px, 0]]), confirm=False)
     row = p["rows"][0]
     assert row["original_date"] == "13-Jan-2026" and row["original_time"] == "10:42:00 +0530"
+
+
+def test_12c_atr_has_no_lookahead_and_matches_wilder():
+    import random
+    rnd = random.Random(7)
+    bars, px = [], 100.0
+    for _ in range(80):
+        o = px; c = o + rnd.uniform(-2, 2); hi = max(o, c) + rnd.uniform(0, 1); lo = min(o, c) - rnd.uniform(0, 1)
+        bars.append({"open": o, "high": hi, "low": lo, "close": c}); px = c
+    full = mkt.atr(bars, 14)
+    for cut in range(1, len(bars)):
+        assert mkt.atr(bars[:cut], 14) == full[:cut]
+    trs = [bars[0]["high"] - bars[0]["low"]] + [max(b["high"] - b["low"], abs(b["high"] - p["close"]), abs(b["low"] - p["close"]))
+                                              for p, b in zip(bars, bars[1:])]
+    assert full[12] is None and abs(full[13] - sum(trs[:14]) / 14) < 1e-9
+    assert abs(full[14] - (full[13] * 13 + trs[14]) / 14) < 1e-9

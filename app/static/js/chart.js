@@ -19,7 +19,7 @@ function css(name) {
 const PIVOT_COLORS = { P: "--pivot-p", R1: "--pivot-r", R2: "--pivot-r", R3: "--pivot-r", S1: "--pivot-s", S2: "--pivot-s", S3: "--pivot-s" };
 
 export function renderChart(container, data, opts = {}) {
-  const toggles = Object.assign({ ema: true, pivots: true, prevDay: false, dayOpen: false, sr: false, vwap: false }, opts.toggles || {});
+  const toggles = Object.assign({ ema: true, pivots: true, prevDay: false, dayOpen: false, sr: false, vwap: false, atr: true }, opts.toggles || {});
   const wrap = h("div", { class: "chart-wrap" });
   const canvas = h("div", { class: "chart-canvas" });
   const legend = h("div", { class: "chart-legend" });
@@ -74,6 +74,17 @@ export function renderChart(container, data, opts = {}) {
       const c = candles.find((x) => x.epoch === p.epoch);
       return c ? { time: t(c.local), value: p.value } : null;
     }).filter(Boolean));
+  }
+
+  const atr = data.atr;
+  if (toggles.atr && atr && atr.points.length) {
+    // Separate pane at the bottom: candles use the top ~78%, ATR the bottom ~18%
+    series.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.25 } });
+    const s = chart.addLineSeries({ color: css("--atr"), lineWidth: 1, priceScaleId: "atr", priceLineVisible: false,
+      lastValueVisible: true, title: `ATR ${atr.length}` });
+    chart.priceScale("atr").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 }, borderVisible: false });
+    const byEpoch = new Map(candles.map((c) => [c.epoch, c]));
+    s.setData(atr.points.map((p) => { const c = byEpoch.get(p.epoch); return c ? { time: t(c.local), value: p.value } : null; }).filter(Boolean));
   }
 
   if (toggles.pivots && data.pivots.sets.length) {
@@ -144,18 +155,25 @@ export function renderChart(container, data, opts = {}) {
   const mk = (key, label, disabled = false, title = null) => h("label", { class: "toggle", title },
     h("input", { type: "checkbox", checked: toggles[key] && !disabled, disabled, onChange: (e) => { opts.onToggle && opts.onToggle({ ...toggles, [key]: e.target.checked }); } }),
     label);
-  toolbar.append(
+  toolbar.append(...[
     h("span", { class: "chart-title" }, `${data.instrument} · 15m`),
-    mk("ema", `EMA ${data.ema.length}`), mk("pivots", `Pivots (${data.pivots.method})`), mk("prevDay", "Prev-day H/L/C"), mk("dayOpen", "Day open"),
+    mk("ema", `EMA ${data.ema.length}`), atr ? mk("atr", `ATR ${atr.length}`, !atr.points.length, atr.method) : null, mk("pivots", `Pivots (${data.pivots.method})`), mk("prevDay", "Prev-day H/L/C"), mk("dayOpen", "Day open"),
     mk("sr", "Swing S/R", false, data.support_resistance ? data.support_resistance.method : null),
     mk("vwap", "VWAP", !(data.vwap && data.vwap.available), data.vwap && !data.vwap.available ? data.vwap.note : null),
-    h("span", { class: revealed ? "mode-badge revealed" : "mode-badge blind" }, revealed ? "REVEALED" : "BLIND · cut at " + data.cutoff_local.slice(0, 16)));
+    h("span", { class: revealed ? "mode-badge revealed" : "mode-badge blind" }, revealed ? "REVEALED" : "BLIND · cut at " + data.cutoff_local.slice(0, 16))].filter(Boolean));
 
+  if (atr && atr.at_entry != null) {
+    const ref = data.entry.reference_price;
+    const pct = ref ? ` (${(100 * atr.at_entry / ref).toFixed(2)}% of price)` : "";
+    wrap.insertBefore(h("div", { class: "small muted" }, `📏 ATR ${atr.length} at entry (last completed candle): `,
+      h("strong", {}, fmt(Number(atr.at_entry.toFixed(2)))), ` pts${pct}`), legend);
+  }
   if (data.entry.position) {
     wrap.insertBefore(h("div", { class: "small muted" }, "⏱ ", data.entry.position.description), legend);
   }
   legend.append(...[
     h("span", {}, h("i", { class: "sw", style: { background: css("--ema") } }), `EMA ${data.ema.length} (completed candles only)`),
+    toggles.atr && atr && atr.points.length ? h("span", {}, h("i", { class: "sw", style: { background: css("--atr") } }), `ATR ${atr.length} (lower pane, completed candles only)`) : null,
     h("span", {}, h("i", { class: "sw", style: { background: css("--pivot-p") } }), "Pivot P"),
     h("span", {}, h("i", { class: "sw", style: { background: css("--pivot-r") } }), "R1–R3"),
     h("span", {}, h("i", { class: "sw", style: { background: css("--pivot-s") } }), "S1–S3"),

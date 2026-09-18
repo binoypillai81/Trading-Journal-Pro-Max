@@ -86,7 +86,7 @@ def meta(conn=Depends(get_conn)):
                        "excluded": conn.execute("SELECT COUNT(*) FROM trades WHERE excluded=1").fetchone()[0]}}
 
 
-EDITABLE = {"exchange_timezone", "ema_length", "pivot_method", "lookback_sessions", "show_next_timestamp",
+EDITABLE = {"exchange_timezone", "ema_length", "atr_length", "pivot_method", "lookback_sessions", "show_next_timestamp",
             "process_context_enabled", "override_enabled", "context_threshold_pct", "declared_rules",
             "show_prev_day_levels", "show_vwap"}
 
@@ -103,6 +103,8 @@ def update_settings(changes: dict = Body(...), conn=Depends(get_conn)):
         raise ValueError("pivot_method must be classic, fibonacci or camarilla")
     if "ema_length" in changes and not (2 <= int(changes["ema_length"]) <= 500):
         raise ValueError("ema_length must be 2..500")
+    if "atr_length" in changes and not (2 <= int(changes["atr_length"]) <= 200):
+        raise ValueError("atr_length must be 2..200")
     for r in changes.get("declared_rules") or []:
         if r.get("type") not in analytics.DECLARED_RULE_TYPES:
             raise ValueError(f"Unknown declared rule type {r.get('type')}")

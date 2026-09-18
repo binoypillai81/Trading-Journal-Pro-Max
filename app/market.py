@@ -213,6 +213,32 @@ def ema(values: list[float], length: int) -> list[float | None]:
     return out
 
 
+def atr(bars: list[dict], length: int) -> list[float | None]:
+    """Wilder's Average True Range, seeded with the simple mean of the first `length` true ranges.
+
+    True range = max(high−low, |high−prev close|, |low−prev close|); the first bar has no previous
+    close, so its TR is high−low. Each output depends only on bars at or before its index.
+    """
+    out: list[float | None] = []
+    prev_close = prev_atr = None
+    trs: list[float] = []
+    for i, b in enumerate(bars):
+        hl = b["high"] - b["low"]
+        tr = hl if prev_close is None else max(hl, abs(b["high"] - prev_close), abs(b["low"] - prev_close))
+        prev_close = b["close"]
+        if i + 1 < length:
+            trs.append(tr)
+            out.append(None)
+        elif i + 1 == length:
+            trs.append(tr)
+            prev_atr = sum(trs) / length
+            out.append(prev_atr)
+        else:
+            prev_atr = (prev_atr * (length - 1) + tr) / length
+            out.append(prev_atr)
+    return out
+
+
 def pivots(h: float, l: float, c: float, method: str = "classic") -> dict:
     p = (h + l + c) / 3
     r = h - l
@@ -341,14 +367,15 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
 
     # --- completed bars (hard cutoff in SQL)
     ema_len = int(s["ema_length"])
-    warm = max(ema_len * 10, 200)
+    atr_len = int(s.get("atr_length", 14))
+    warm = max(ema_len * 10, atr_len * 10, 200)
     display = [_bar_dict(r) for r in conn.execute(
         """SELECT epoch, local, session_date, open, high, low, close, volume FROM market_bars
            WHERE instrument=? AND timeframe='15m' AND session_date >= ? AND epoch + 900 <= ? ORDER BY epoch""",
         (inst, display_start_date, E))]
     first_display_epoch = display[0]["epoch"] if display else E
     warmup = [dict(r) for r in conn.execute(
-        """SELECT epoch, close FROM market_bars WHERE instrument=? AND timeframe='15m' AND epoch < ?
+        """SELECT epoch, high, low, close FROM market_bars WHERE instrument=? AND timeframe='15m' AND epoch < ?
            ORDER BY epoch DESC LIMIT ?""", (inst, first_display_epoch, warm))][::-1]
 
     # --- forming bar at entry
@@ -407,6 +434,9 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
     closes = [w["close"] for w in warmup] + [b["close"] for b in display]
     ema_all = ema(closes, ema_len)[len(warmup):]
     ema_points = [{"epoch": b["epoch"], "value": v} for b, v in zip(display, ema_all) if v is not None]
+    # --- ATR on completed bars only
+    atr_all = atr(warmup + display, atr_len)[len(warmup):]
+    atr_points = [{"epoch": b["epoch"], "value": v} for b, v in zip(display, atr_all) if v is not None]
 
     # --- pivots: one level set per displayed session, each from its own prior completed session
     pivot_sets = []
@@ -433,6 +463,8 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
         "instrument": inst, "timeframe": "15m", "timezone": tz, "mode": "BLIND",
         "cutoff_epoch": E, "cutoff_local": datetime.fromtimestamp(E, ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M:%S"),
         "candles": display, "forming_candle": forming, "ema": {"length": ema_len, "points": ema_points},
+        "atr": {"length": atr_len, "points": atr_points, "at_entry": atr_points[-1]["value"] if atr_points else None,
+                "method": f"Wilder ATR {atr_len} on completed 15-minute candles (points of the underlying)"},
         "pivots": {"method": s["pivot_method"], "formula": PIVOT_DOC[s["pivot_method"]], "source": PIVOT_SOURCE_NOTE,
                    "sets": pivot_sets},
         "day_open": day_open,
@@ -457,6 +489,7 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
         all_bars = display + after
         closes_full = [w["close"] for w in warmup] + [b["close"] for b in all_bars]
         ema_full = ema(closes_full, ema_len)[len(warmup):]
+        atr_full = atr(warmup + all_bars, atr_len)[len(warmup):]
         extra_days = sorted({b["session_date"] for b in after} - set(day_list))
         for d in extra_days:
             prior = _prior_session_ohlc(conn, inst, d, int(reveal_until_epoch) + 900)
@@ -469,6 +502,8 @@ def build_chart(conn, trade: dict, *, cutoff_epoch: int, reveal_until_epoch: int
             "after_candles": after,
             "ema": {"length": ema_len, "points": [{"epoch": b["epoch"], "value": v} for b, v in zip(all_bars, ema_full) if v is not None],
                     "blind_points_count": len(ema_points)},
+            "atr": {**result["atr"], "points": [{"epoch": b["epoch"], "value": v} for b, v in zip(all_bars, atr_full) if v is not None],
+                    "blind_points_count": len(atr_points)},
             "max_epoch_in_payload": max([b["epoch"] for b in all_bars], default=None),
         })
     return result

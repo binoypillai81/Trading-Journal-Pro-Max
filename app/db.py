@@ -192,6 +192,7 @@ BEGIN SELECT RAISE(ABORT, 'Event log is append-only'); END;
 DEFAULT_SETTINGS = {
     "exchange_timezone": "Asia/Kolkata",
     "ema_length": 15,
+    "atr_length": 14,
     "pivot_method": "classic",            # classic | fibonacci | camarilla
     "lookback_sessions": 3,               # sessions of history shown before entry
     "show_next_timestamp": False,         # show next trade's entry time during blind review

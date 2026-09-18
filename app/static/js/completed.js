@@ -48,7 +48,7 @@ export async function completedDetailView(root, rid) {
   const r = await api("GET", `/api/reviews/${rid}`);
   const chartBox = h("div", {});
   let handle = null;
-  const toggles = { ema: true, pivots: true, prevDay: false, dayOpen: false };
+  const toggles = { ema: true, pivots: true, prevDay: false, dayOpen: false, atr: true };
   const draw = async () => {
     const data = await api("GET", `/api/reviews/${rid}/chart`);
     if (handle) handle.destroy();
